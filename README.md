@@ -1,169 +1,97 @@
 # 📊 Análise de Dados Públicos com SQL
 
-> Análise exploratória de dados públicos brasileiros utilizando SQL avançado — CTEs, Window Functions, subqueries e geração de insights de negócio a partir de dados reais do IBGE e IPEA.
+> Consultas analíticas sobre o mercado de trabalho formal brasileiro (Novo CAGED), usando CTEs, window functions e percentis em PostgreSQL.
 
 ![SQL](https://img.shields.io/badge/SQL-CC2927?style=flat-square&logo=microsoftsqlserver&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-336791?style=flat-square&logo=postgresql&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
 
 ---
 
 ## 🎯 Objetivo
 
-Demonstrar habilidades em SQL analítico aplicado a cenários reais de negócio: análise de mercado de trabalho, indicadores econômicos e tendências setoriais, usando dados públicos abertos do Brasil.
+Responder perguntas de negócio sobre emprego formal com SQL analítico: onde e em quais setores se gera emprego, como o saldo evolui mês a mês e quanto a escolaridade pesa no salário de admissão.
 
 ---
 
-## 📁 Estrutura do Projeto
+## 📁 Estrutura
 
 ```
 analise-dados-publicos-sql/
-│
-├── dados/
-│   ├── README_dados.md          # Fonte e descrição dos datasets
-│   └── setup_database.sql       # Script para criar e popular o banco
-│
 ├── queries/
-│   ├── 01_exploracao_inicial.sql
-│   ├── 02_analise_mercado_trabalho.sql
-│   ├── 03_ranking_e_comparativos.sql
-│   ├── 04_tendencias_temporais.sql
-│   └── 05_kpis_negocio.sql
-│
-├── python/
-│   └── carregar_dados.py        # Script para download e carga dos dados
-│
+│   └── 02_analise_mercado_trabalho.sql   # 5 consultas comentadas
 └── README.md
 ```
 
 ---
 
-## 📊 Datasets Utilizados
+## 🔍 Consultas
 
-| Dataset | Fonte | Descrição |
-|---------|-------|-----------|
-| PNADC (Pesquisa Nacional por Amostra de Domicílios) | IBGE | Indicadores de emprego, renda e escolaridade |
-| PIB por municípios | IBGE | Produto Interno Bruto municipal |
-| IPCA histórico | IPEA | Índice de inflação mensal |
-| Empregos formais (CAGED) | MTE | Admissões e desligamentos mensais |
+| # | Pergunta de negócio | Técnicas |
+|---|---------------------|----------|
+| 1 | Quais setores mais geraram emprego em 2023–2024? | `GROUP BY`, `NULLIF` contra divisão por zero |
+| 2 | Quais os 5 estados com maior saldo em 2024 e quanto representam do total do Brasil? | CTE, `RANK()`, `SUM() OVER ()` calculado antes do filtro |
+| 3 | Como o saldo evoluiu mês a mês? | Média móvel de 3 meses (`ROWS BETWEEN`), acumulado no ano (`PARTITION BY`) |
+| 4 | Quanto ganha, na admissão, cada grau de instrução? | Média ponderada, mediana com `PERCENTILE_CONT` |
+| 5 | Quais setores desligam mais do que contratam? | CTE + `RANK()` com `NULLS LAST` |
 
-> Todos os dados são públicos e disponíveis nas APIs abertas do IBGE (sidra.ibge.gov.br) e IPEA (ipeadata.gov.br)
-
----
-
-## 🔍 Análises Desenvolvidas
-
-### 1. Exploração Inicial
-- Distribuição de dados por região e período
-- Identificação de outliers e valores nulos
-- Estatísticas descritivas por categoria
-
-### 2. Mercado de Trabalho
-- Taxa de desemprego por estado (ranking)
-- Evolução da renda média formal ao longo do tempo
-- Setores com maior crescimento de vagas
-
-### 3. Rankings e Comparativos
-- Top 10 municípios por PIB per capita
-- Comparativo Norte vs Sudeste: emprego formal e renda
-- Window functions para ranking dinâmico
-
-### 4. Tendências Temporais
-- Análise de sazonalidade no CAGED (admissões por mês)
-- Moving average de 3 meses para suavizar ruídos
-- YoY (year-over-year) de indicadores-chave
-
-### 5. KPIs de Negócio
-- Ticket médio salarial por setor
-- Taxa de rotatividade por região
-- Índice de formalização do emprego
-
----
-
-## 💡 Técnicas SQL Utilizadas
+### Exemplo — média móvel e acumulado no ano
 
 ```sql
--- Exemplo: Window Function para ranking por estado
 SELECT
-    estado,
-    setor,
-    total_empregos,
-    RANK() OVER (PARTITION BY estado ORDER BY total_empregos DESC) AS rank_setor,
-    SUM(total_empregos) OVER (PARTITION BY estado) AS total_estado,
-    ROUND(100.0 * total_empregos / SUM(total_empregos) OVER (PARTITION BY estado), 2) AS pct_participacao
-FROM vw_empregos_formais
-WHERE ano = 2024;
-```
-
-```sql
--- Exemplo: CTE para análise de tendência com Moving Average
-WITH base AS (
-    SELECT
-        ano_mes,
-        admissoes,
-        desligamentos,
-        admissoes - desligamentos AS saldo_mensal
-    FROM caged_mensal
-    WHERE ano BETWEEN 2022 AND 2024
-),
-moving_avg AS (
-    SELECT
-        ano_mes,
-        saldo_mensal,
-        ROUND(AVG(saldo_mensal) OVER (
-            ORDER BY ano_mes ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-        ), 0) AS media_movel_3m
-    FROM base
-)
-SELECT * FROM moving_avg ORDER BY ano_mes;
-```
-
-```sql
--- Exemplo: YoY com LAG
-SELECT
-    ano,
-    mes,
-    taxa_desemprego,
-    LAG(taxa_desemprego, 12) OVER (ORDER BY ano, mes) AS taxa_ano_anterior,
-    ROUND(taxa_desemprego - LAG(taxa_desemprego, 12) OVER (ORDER BY ano, mes), 2) AS variacao_pp
-FROM pnadc_trimestral
-ORDER BY ano, mes;
+    TO_CHAR(competencia, 'YYYY-MM')  AS mes_referencia,
+    saldo,
+    ROUND(AVG(saldo) OVER (
+        ORDER BY competencia
+        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+    ), 0)                            AS media_movel_3m,
+    SUM(saldo) OVER (
+        PARTITION BY EXTRACT(YEAR FROM competencia)
+        ORDER BY competencia
+    )                                AS saldo_acumulado_ano
+FROM base
+ORDER BY competencia;
 ```
 
 ---
 
-## ▶️ Como Executar
+## 💡 Decisões de análise
 
-```bash
-# 1. Clone o repositório
-git clone https://github.com/jonathansilvadesa-sys/analise-dados-publicos-sql
-cd analise-dados-publicos-sql
-
-# 2. Instale as dependências Python
-pip install pandas requests psycopg2-binary python-dotenv
-
-# 3. Configure o banco PostgreSQL e o .env
-cp .env.example .env
-# Edite .env com suas credenciais
-
-# 4. Baixe e carregue os dados
-python python/carregar_dados.py
-
-# 5. Execute as queries na sua IDE favorita
-# (DBeaver, Azure Data Studio, pgAdmin, etc.)
-```
+- **Total do Brasil antes do filtro (consulta 2).** O `WHERE` roda antes das window functions do `SELECT`. Por isso o total nacional é calculado dentro da CTE; calculado depois do filtro, somaria só os 5 estados do topo.
+- **Média ponderada (consulta 4).** Cada linha da tabela já é a média de um grupo. Uma média simples daria o mesmo peso a um grupo com 3 admissões e a outro com 3.000, então o salário é ponderado pelo número de admissões.
+- **Por que não "taxa de rotatividade" (consulta 5).** Rotatividade se calcula sobre o estoque de vínculos ativos, que vem da RAIS e não está no CAGED. A consulta mede a razão entre desligamentos e admissões, que o CAGED permite calcular.
 
 ---
 
-## 📌 Aprendizados e Contexto Profissional
+## ▶️ Como usar
 
-Esta análise reflete o tipo de trabalho que realizei profissionalmente:
+As consultas esperam uma tabela `caged_mensal` em PostgreSQL, já agregada a partir dos microdados do [Novo CAGED](https://www.gov.br/trabalho-e-emprego/pt-br/acesso-a-informacao/acoes-e-programas/programas-projetos-acoes-obras-e-atividades/estatisticas-trabalho/microdados-rais-e-caged):
 
-- Na **Icatu Seguros**: queries para análise de processos jurídicos, aging e KPIs de honorários
-- Na **Ipiranga**: consultas para alimentar dashboards Power BI e análises de performance
-- No **Grupo Dupla**: queries para extração e transformação de dados multi-fonte
+| Coluna | Tipo | Descrição |
+|--------|------|-----------|
+| ano, mes | int | Competência |
+| uf, nome_estado | text | Unidade da federação |
+| setor_atividade | text | Seção da CNAE |
+| grau_instrucao | text | Escolaridade |
+| admissoes, desligamentos | int | Movimentações no grupo |
+| salario_medio | numeric | Salário médio de admissão do grupo |
 
-A diferença é que aqui usamos dados públicos para demonstrar as mesmas técnicas sem expor informações confidenciais.
+---
+
+## 🚧 Próximos passos
+
+- Script em Python para baixar os microdados e montar a tabela `caged_mensal`
+- Consultas de exploração inicial e de tendências (sazonalidade, comparação ano contra ano)
+- Seção de resultados com os números reais
+
+---
+
+## 📌 Contexto profissional
+
+O mesmo tipo de SQL que usei no trabalho, aplicado a dados públicos para não expor informações confidenciais:
+
+- **Icatu Seguros:** consultas para análise de processos jurídicos, aging e KPIs de honorários
+- **Ipiranga:** consultas para alimentar dashboards Power BI e análises de performance
+- **Grupo Dupla:** extração e transformação de dados de múltiplas fontes
 
 ---
 
